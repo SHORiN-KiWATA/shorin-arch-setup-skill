@@ -1,0 +1,290 @@
+---
+id: 02-musthave
+source: /home/shorin/Documents/github/shorin-arch-setup/scripts/02-musthave.sh
+source_relative: scripts/02-musthave.sh
+phase: base
+risk: high
+requires_root: true
+language: bash
+mode: "0644"
+sha256: "cc72af960a0792669e6cf1a700a400512c26bd3ffb06e19bf75fb8b83e8a4d7d"
+generated_from: bash-source
+---
+
+# 02-musthave
+
+## Intent
+
+Install essential firmware, audio, locale, input method, Bluetooth, power, fastfetch, and Flatpak support.
+
+## Declarative Reading Notes
+
+This module is a Markdown declaration of the original Bash behavior. Treat the embedded Bash as
+source evidence, not as the preferred execution path. When applying this module, first audit the
+current system state, then apply only the missing state described by package, file, service, and
+verification sections.
+
+## Extracted Mutating Commands
+
+### pacman
+
+- `exe pacman -S --noconfirm --needed btrfs-assistant xorg-xhost less`
+- `exe pacman -S --noconfirm --needed grub-btrfs inotify-tools`
+- `exe pacman -S --noconfirm --needed sof-firmware alsa-ucm-conf alsa-firmware`
+- `exe pacman -S --noconfirm --needed pipewire lib32-pipewire wireplumber pipewire-pulse pipewire-alsa pipewire-jack`
+- `exe pacman -S --noconfirm --needed fcitx5-im fcitx5-rime rime-ice-git`
+- `exe pacman -S --noconfirm --needed usbutils pciutils`
+- `exe pacman -S --noconfirm --needed bluez bluetui`
+- `exe pacman -S --noconfirm --needed power-profiles-daemon`
+- `exe pacman -S --noconfirm --needed fastfetch gdu btop cmatrix lolcat sl`
+- `exe pacman -S --noconfirm --needed flatpak`
+
+### flatpak
+
+- `exe pacman -S --noconfirm --needed flatpak`
+- `exe flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo`
+
+### systemctl
+
+- `exe systemctl enable --now grub-btrfsd`
+- `exe systemctl --global enable pipewire pipewire-pulse wireplumber`
+- `exe systemctl enable --now bluetooth`
+- `exe systemctl enable --now power-profiles-daemon`
+
+### grub
+
+- `if [ -f "/etc/default/grub" ] && command -v grub-mkconfig >/dev/null 2>&1; then`
+- `exe grub-mkconfig -o /boot/grub/grub.cfg`
+
+### file_mutations
+
+- `sed -i "s|^#*GRUB_BTRFS_GBTRFS_SEARCH_DIRNAME=.*|GRUB_BTRFS_GBTRFS_SEARCH_DIRNAME=\"${BTRFS_BOOT_PATH}\"|" /etc/default/grub-btrfs/config`
+- `sed -i 's/^#\s*en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen`
+- `sed -i 's/^#\s*zh_CN.UTF-8 UTF-8/zh_CN.UTF-8 UTF-8/' /etc/locale.gen`
+
+
+## Extracted Package/App State Variables
+
+No package or app state variables were extracted.
+
+## Verification Guidance
+
+- Verify packages mentioned by package-manager commands are installed.
+- Verify files mentioned by file mutation commands exist and contain the desired state.
+- Verify services mentioned by `systemctl` commands are enabled or active as declared.
+- For high or critical risk modules, create or confirm a relevant Btrfs/snapper checkpoint first.
+
+## Rollback Guidance
+
+- Prefer Btrfs/snapper rollback markers when the module changes system state.
+- For desktop-stage changes, prefer the `Before Desktop Environments` checkpoint.
+- For base-stage changes, prefer the `Before Shorin Setup` checkpoint.
+- Do not run destructive rollback commands without explicit user confirmation.
+
+## Legacy Bash Source
+
+~~~~bash
+#!/bin/bash
+
+# ==============================================================================
+# 02-musthave.sh - Essential Software, Drivers & Locale
+# ==============================================================================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/00-utils.sh"
+
+check_root
+
+log ">>> Starting Phase 2: Essential (Must-have) Software & Drivers"
+
+# ------------------------------------------------------------------------------
+# 1. Btrfs Assistants & GRUB Snapshot Integration
+# ------------------------------------------------------------------------------
+section "Step 1/8" "Btrfs Snapshot Integration"
+
+ROOT_FSTYPE=$(findmnt -n -o FSTYPE /)
+if [ "$ROOT_FSTYPE" == "btrfs" ]; then
+    log "Btrfs detected. Installing advanced snapshot management tools..."
+    
+    exe pacman -S --noconfirm --needed btrfs-assistant xorg-xhost less
+    success "Btrfs helper tools installed."
+    
+    if [ -f "/etc/default/grub" ] && command -v grub-mkconfig >/dev/null 2>&1; then
+        log "Integrating snapshots into GRUB menu..."
+        exe pacman -S --noconfirm --needed grub-btrfs inotify-tools 
+        # 【新增条件判断】：检测 ESP 分区上是否存在独立的 grub 目录
+        HAS_ESP_GRUB=false
+        VFAT_MOUNTS=$(findmnt -n -l -o TARGET -t vfat | grep -v "^/boot$")
+        if [ -n "$VFAT_MOUNTS" ]; then
+            while read -r mountpoint; do
+                if [ -d "$mountpoint/grub" ]; then
+                    HAS_ESP_GRUB=true
+                    break 
+                fi
+            done <<< "$VFAT_MOUNTS"
+        fi
+        
+        # 只有在 Decoupled 模式（找到 ESP 上的 grub 目录）时，才修改路径配置
+        if [ "$HAS_ESP_GRUB" = true ]; then
+            # 重新计算 Btrfs 内部的 boot 路径
+            SUBVOL_NAME=$(findmnt -n -o OPTIONS / | tr ',' '\n' | grep '^subvol=' | cut -d= -f2)
+            if [ "$SUBVOL_NAME" == "/" ] || [ -z "$SUBVOL_NAME" ]; then
+                BTRFS_BOOT_PATH="/boot/grub"
+            else
+                [[ "$SUBVOL_NAME" != /* ]] && SUBVOL_NAME="/${SUBVOL_NAME}"
+                BTRFS_BOOT_PATH="${SUBVOL_NAME}/boot/grub"
+            fi
+            
+            # 修改 grub-btrfs 的跨区搜索路径
+            if [ -f "/etc/default/grub-btrfs/config" ]; then
+                log "Decoupled ESP/GRUB detected. Patching grub-btrfs config for Btrfs search path..."
+                sed -i "s|^#*GRUB_BTRFS_GBTRFS_SEARCH_DIRNAME=.*|GRUB_BTRFS_GBTRFS_SEARCH_DIRNAME=\"${BTRFS_BOOT_PATH}\"|" /etc/default/grub-btrfs/config
+            fi
+        else
+            log "Standard /boot/grub setup detected. Skipping grub-btrfs path patch."
+        fi
+        
+        # 开启监听服务并重新生成菜单（这次菜单里就会多出 Snapshots 选项了！）
+        exe systemctl enable --now grub-btrfsd
+        log "Regenerating GRUB Config with Snapshot entries..."
+        exe grub-mkconfig -o /boot/grub/grub.cfg
+        success "GRUB snapshot menu integration completed."
+    fi
+else
+    log "Root is not Btrfs. Skipping Btrfs tool installation."
+fi
+
+# ------------------------------------------------------------------------------
+# 2. Audio & Video
+# ------------------------------------------------------------------------------
+section "Step 2/8" "Audio & Video"
+
+log "Installing firmware..."
+exe pacman -S --noconfirm --needed sof-firmware alsa-ucm-conf alsa-firmware
+
+log "Installing Pipewire stack..."
+exe pacman -S --noconfirm --needed pipewire lib32-pipewire wireplumber pipewire-pulse pipewire-alsa pipewire-jack
+
+exe systemctl --global enable pipewire pipewire-pulse wireplumber
+success "Audio setup complete."
+
+# ------------------------------------------------------------------------------
+# 3. Locale
+# ------------------------------------------------------------------------------
+section "Step 3/8" "Locale Configuration"
+
+# 标记是否需要重新生成
+NEED_GENERATE=false
+
+# --- 1. 检测 en_US.UTF-8 ---
+if locale -a | grep -iq "en_US.utf8"; then
+    success "English locale (en_US.UTF-8) is active."
+else
+    log "Enabling en_US.UTF-8..."
+    # 使用 sed 取消注释
+    sed -i 's/^#\s*en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+    NEED_GENERATE=true
+fi
+
+# --- 2. 检测 zh_CN.UTF-8 ---
+if locale -a | grep -iq "zh_CN.utf8"; then
+    success "Chinese locale (zh_CN.UTF-8) is active."
+else
+    log "Enabling zh_CN.UTF-8..."
+    # 使用 sed 取消注释
+    sed -i 's/^#\s*zh_CN.UTF-8 UTF-8/zh_CN.UTF-8 UTF-8/' /etc/locale.gen
+    NEED_GENERATE=true
+fi
+
+# --- 3. 如果有修改，统一执行生成 ---
+if [ "$NEED_GENERATE" = true ]; then
+    log "Generating locales (this may take a moment)..."
+    if exe locale-gen; then
+        success "Locales generated successfully."
+    else
+        error "Locale generation failed."
+    fi
+else
+    success "All locales are already up to date."
+fi
+
+# ------------------------------------------------------------------------------
+# 4. Input Method
+# ------------------------------------------------------------------------------
+section "Step 4/8" "Input Method (Fcitx5)"
+
+exe pacman -S --noconfirm --needed fcitx5-im fcitx5-rime rime-ice-git 
+
+success "Fcitx5 installed."
+
+# ------------------------------------------------------------------------------
+# 5. Bluetooth (Smart Detection)
+# ------------------------------------------------------------------------------
+section "Step 5/8" "Bluetooth"
+
+# Ensure detection tools are present
+log "Detecting Bluetooth hardware..."
+exe pacman -S --noconfirm --needed usbutils pciutils
+
+BT_FOUND=false
+
+# 1. Check USB
+if lsusb | grep -qi "bluetooth"; then BT_FOUND=true; fi
+# 2. Check PCI
+if lspci | grep -qi "bluetooth"; then BT_FOUND=true; fi
+# 3. Check RFKill
+if rfkill list bluetooth >/dev/null 2>&1; then BT_FOUND=true; fi
+
+if [ "$BT_FOUND" = true ]; then
+    info_kv "Hardware" "Detected"
+    
+    log "Installing Bluez "
+    exe pacman -S --noconfirm --needed bluez bluetui
+    
+    exe systemctl enable --now bluetooth
+    success "Bluetooth service enabled."
+else
+    info_kv "Hardware" "Not Found"
+    warn "No Bluetooth device detected. Skipping installation."
+fi
+
+# ------------------------------------------------------------------------------
+# 6. Power
+# ------------------------------------------------------------------------------
+section "Step 6/8" "Power Management"
+
+exe pacman -S --noconfirm --needed power-profiles-daemon
+exe systemctl enable --now power-profiles-daemon
+success "Power profiles daemon enabled."
+
+# ------------------------------------------------------------------------------
+# 7. Fastfetch
+# ------------------------------------------------------------------------------
+section "Step 7/8" "Fastfetch"
+
+exe pacman -S --noconfirm --needed fastfetch gdu btop cmatrix lolcat sl
+success "Fastfetch installed."
+
+log "Module 02 completed."
+
+# ------------------------------------------------------------------------------
+# 9. flatpak
+# ------------------------------------------------------------------------------
+
+exe pacman -S --noconfirm --needed flatpak
+exe flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+CURRENT_TZ=$(readlink -f /etc/localtime)
+IS_CN_ENV=false
+if [[ "$CURRENT_TZ" == *"Shanghai"* ]] || [ "$CN_MIRROR" == "1" ] || [ "$DEBUG" == "1" ]; then
+    IS_CN_ENV=true
+    info_kv "Region" "China Optimization Active"
+fi
+
+if [ "$IS_CN_ENV" = true ]; then
+    select_flathub_mirror
+else
+    log "Using Global Sources."
+fi
+
+~~~~

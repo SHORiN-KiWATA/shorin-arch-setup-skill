@@ -1,0 +1,553 @@
+---
+source: shorinniri
+target: shorinniri
+type: text
+language: text
+mode: "0644"
+executable: false
+protected: false
+generated: false
+update_policy: replace
+owner_scope: user
+backup: true
+sha256: "bd7f536545190bdbd667137b31c01b38ddde392ac88bf7c0da1d9b83e924f6dd"
+size_bytes: 22625
+git_status: clean
+---
+
+# shorinniri
+
+Source: `shorinniri`
+
+Install target: `~/shorinniri`
+
+~~~~text
+#!/usr/bin/env bash
+
+# ==========================================
+# 1. 国际化与 UI 美化设置 (i18n & UI)
+# ==========================================
+C_DEF='\033[0m'
+C_BLU='\033[1;34m'
+C_GRN='\033[1;32m'
+C_YEL='\033[1;33m'
+C_RED='\033[1;31m'
+C_CYA='\033[1;36m'
+
+IS_ZH=0
+if [[ "${LANG}" == *"zh_CN"* || "${LC_ALL}" == *"zh_CN"* ]]; then
+    IS_ZH=1
+fi
+
+_t() {
+    if [[ $IS_ZH -eq 1 && -n "$2" ]]; then echo "$2"; else echo "$1"; fi
+}
+
+info() { echo -e "${C_BLU}[*]${C_DEF} $1"; }
+ok()   { echo -e "${C_GRN}[✔]${C_DEF} $1"; }
+warn() { echo -e "${C_YEL}[!]${C_DEF} $1"; }
+err()  { echo -e "${C_RED}[✘]${C_DEF} $1"; }
+step() { echo -e "\n${C_CYA}>>> $1${C_DEF}"; }
+
+# ==========================================
+# 2. 全局变量与配置
+# ==========================================
+TEMPLATE_DIR="/usr/share/shorin-niri"
+WALLPAPER_SRC_DIR="/usr/share/shorin-niri-wallpapers"
+BASE_BACKUP_DIR="$HOME/.cache/shorin-niri-backup"
+BACKUP_DIR="$BASE_BACKUP_DIR/$(date +%Y%m%d_%H%M%S)"
+
+USER_IGNORE_FILE="$HOME/.config/shorin-niri/protected.list"
+CACHE_FILE="$HOME/.cache/shorin-niri-software.cache"
+
+# ==========================================
+# 3. 软件清单列表 (外围全家桶)
+# ==========================================
+TARGET_SOFTWARE=(
+    # --- Main Meta Package ---
+    "shorin-niri-git" "xdg-desktop-portal-gnome" "cliphist-tui-git"
+    # --- Desktop Extras & Media ---
+    "breeze-cursors" "mpv" "satty" "wf-recorder" "wl-screenrec-git" "imv"
+    # --- Fonts ---
+    "noto-fonts" "noto-fonts-cjk" "noto-fonts-emoji" "ttf-jetbrains-mono-nerd"
+    "ttf-jetbrains-maple-mono-nf-xx-xx" "ttf-lxgw-wenkai-screen"
+    # --- File Manager & Core Utils ---
+    "nautilus" "thunar" "file-roller" "gvfs-smb" "gvfs-mtp" "gvfs-gphoto2"
+    "nautilus-open-any-terminal" "gnome-keyring" "tumbler" "poppler-glib"
+    "ffmpegthumbnailer" "webp-pixbuf-loader" "libgsf" "xdg-desktop-portal-gtk" "icoextract" "python-pillow"
+    "gst-plugins-base" "gst-plugins-good" "gst-libav" "thunar-archive-plugin" "thunar-volman"
+    # --- Standard CLI/GUI Packages ---
+    "bat" "bazaar" "bluetui" "clipnotify" "xclip" "eza" "fish" "starship" "zoxide"
+    "chafa" "timg" "imagemagick" "waifu2x-ncnn-vulkan" "jq" "nwg-look" "pacman-contrib"
+    "wlsunset" "pavucontrol" "downgrade" "strace" "xdg-terminal-exec" "kitty" "firefox"
+    "fastfetch" "btop" "gdu" "opencode"
+    # --- AUR Specific Packages ---
+    "shorin-contrib-git" "linuxqq-clipsync-git" "ddcutil-service" "python-pywalfox"
+    "waypaper-git" "niri-sidebar-git" "wl-longshot-git" "shorin-screenrec-menu-git"
+    # --- Input Method ---
+    "fcitx5" "fcitx5-configtool" "fcitx5-gtk" "fcitx5-qt" "fcitx5-rime" "rime-ice-git" "rime-wubi" "rime-wanxiang-gram-zh-hans" "rime-llm-translator-git"
+)
+
+# 系统级强制保护黑名单
+UPDATE_IGNORE=(
+    ".config/gtk-3.0"
+    ".config/gtk-4.0"
+    ".config/mimeapps.list"
+    ".config/xdg-terminals.list"
+    ".config/niri/output.kdl"
+    ".config/fcitx5"
+    ".local/share/fcitx5"
+    ".local/themes"
+    ".config/niri"
+    ".config/waybar/colors.css"
+    ".cache/wal/colors.json"
+    ".config/fuzzel/colors.ini"
+    ".config/kitty/themes/matugen.conf"
+    ".config/mako/colors.conf"
+    ".config/btop/themes/matugen.theme"
+    ".config/cava/themes/your-theme"
+    ".config/starship.toml"
+    ".config/yazi/theme.toml"
+    ".config/niri/colors.kdl"
+    ".cache/matugen/recoloricons.sh"
+    ".config/swayosd/colors.css"
+    ".config/fastfetch/config.jsonc"
+    ".cache/matugen/hypr/colors.conf"
+    ".cache/matugen_vscode_inject.json"
+    ".config/obs-studio/themes/matugen.obt"
+)
+
+# ==========================================
+# 4. Sudo 智能探针与保活机制 (Keep-alive)
+# ==========================================
+ask_for_sudo() {
+    # 探针：检查当前是否已被外层自动化脚本赋予了免密权限
+    if sudo -n true 2>/dev/null; then
+        (while kill -0 "$$" 2>/dev/null; do
+            sudo -n true >/dev/null 2>&1
+            sleep 60
+        done) 2>/dev/null &
+        return 0
+    fi
+
+    step "$(_t "Requesting Administrator Privileges" "请求管理员权限进行环境部署")"
+    info "$(_t "Please enter your password for sudo. It will be cached for the whole process." "请输入您的密码。系统将为整个安装过程保持免密状态。")"
+    
+    sudo -v || {
+        err "$(_t "Sudo authentication failed. Exiting." "密码验证失败，退出程序。")"
+        exit 1
+    }
+
+    # 后台保活循环
+    (while kill -0 "$$" 2>/dev/null; do
+        sudo -n true >/dev/null 2>&1
+        sleep 60
+    done) 2>/dev/null &
+    
+    ok "$(_t "Sudo privileges acquired and kept alive." "管理员权限获取成功。")"
+}
+
+# ==========================================
+# 5. 软件依赖管理 (差异比对与自动安装)
+# ==========================================
+get_aur_helper() {
+    if command -v yay >/dev/null 2>&1; then echo "yay"; return; fi
+    if command -v paru >/dev/null 2>&1; then echo "paru"; return; fi
+    err "$(_t "No AUR helper found. Please install yay or paru." "未找到 AUR 助手，请先安装 yay 或 paru。")"
+    exit 1
+}
+
+manage_software() {
+    local helper=$(get_aur_helper)
+    step "$(_t "Checking Optional Dependencies" "检查并同步全家桶软件")"
+    
+    # ======== 1. 废弃软件检测 (历史缓存比对) ========
+    if [[ -f "$CACHE_FILE" ]]; then
+        local old_software=()
+        mapfile -t old_software < "$CACHE_FILE"
+        local deprecated=()
+        for old_pkg in "${old_software[@]}"; do
+            local found=0
+            for new_pkg in "${TARGET_SOFTWARE[@]}"; do
+                if [[ "$old_pkg" == "$new_pkg" ]]; then found=1; break; fi
+            done
+            if [[ $found -eq 0 ]] && pacman -Qq "$old_pkg" >/dev/null 2>&1; then
+                deprecated+=("$old_pkg")
+            fi
+        done
+        
+        if [[ ${#deprecated[@]} -gt 0 ]]; then
+            warn "$(_t "The following packages are no longer required by Shorin Niri:" "Shorin Niri 已不再将以下软件作为默认组件:")"
+            for dpkg in "${deprecated[@]}"; do echo -e "  ${C_YEL}- $dpkg${C_DEF}"; done
+            info "$(_t "You can manually remove them: paru -Rns ${deprecated[*]}" "如果不需要，可手动清理: paru -Rns ${deprecated[*]}")"
+            echo ""
+        fi
+    fi
+
+    # ======== 2. 安装缺失软件 ========
+    local to_install=()
+    for pkg in "${TARGET_SOFTWARE[@]}"; do
+        if ! pacman -Qq "$pkg" >/dev/null 2>&1; then to_install+=("$pkg"); fi
+    done
+    
+    if [ ${#to_install[@]} -eq 0 ]; then
+        ok "$(_t "All required optional software is already installed." "当前版本的所有配套软件均已安装。")"
+    else
+        info "$(_t "Installing newly added/missing software in the background..." "正在静默安装新增或缺失的软件...")"
+        YAY_NO_CONFIRM=1 $helper -S --needed --noconfirm "${to_install[@]}"
+        
+        # --- 新增：后置严谨验证环节 ---
+        local failed_pkgs=()
+        for pkg in "${to_install[@]}"; do
+            if ! pacman -Qq "$pkg" >/dev/null 2>&1; then 
+                failed_pkgs+=("$pkg")
+            fi
+        done
+
+        if [ ${#failed_pkgs[@]} -eq 0 ]; then
+            ok "$(_t "All missing software installed successfully." "所有缺失软件均已成功安装。")"
+        else
+            warn "$(_t "The following packages failed to install/build:" "以下软件安装或编译失败，请检查网络或 AUR 状态:")"
+            for fpkg in "${failed_pkgs[@]}"; do
+                echo -e "  ${C_RED}- $fpkg${C_DEF}"
+            done
+            # 不阻断流程，允许继续执行系统配置
+            info "$(_t "Script will continue, but some features might be missing." "脚本将继续执行，但由于软件缺失，部分功能可能无法正常工作。")"
+        fi
+        # ----------------------------
+    fi
+    
+    # ======== 3. 标记免死金牌与写入缓存 ========
+    # --- 修复：只把真正安装成功的软件写入缓存，防止由于失败导致下次跳过检测 ---
+    local actually_installed=()
+    for pkg in "${TARGET_SOFTWARE[@]}"; do
+        if pacman -Qq "$pkg" >/dev/null 2>&1; then 
+            actually_installed+=("$pkg")
+        fi
+    done
+
+    if [ ${#actually_installed[@]} -gt 0 ]; then
+        info "$(_t "Marking installed software as explicitly installed to prevent accidental removal..." "正在保护已安装软件不被作为孤儿包误删...")"
+        sudo pacman -D --asexplicit "${actually_installed[@]}" >/dev/null 2>&1
+
+        mkdir -p "$(dirname "$CACHE_FILE")"
+        printf "%s\n" "${actually_installed[@]}" > "$CACHE_FILE"
+    fi
+}
+
+# ==========================================
+# 6. 配置保护与同步核心逻辑
+# ==========================================
+build_ignore_list() {
+    ALL_IGNORES=("${UPDATE_IGNORE[@]}")
+    if [[ -f "$USER_IGNORE_FILE" ]]; then
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && ALL_IGNORES+=("$line")
+        done < "$USER_IGNORE_FILE"
+    fi
+}
+
+is_ignored() {
+    local target_path="$1"
+    for ignore_rule in "${ALL_IGNORES[@]}"; do
+        if [[ "$target_path" == "$ignore_rule" || "$target_path" == "$ignore_rule/"* ]]; then return 0; fi
+    done
+    return 1
+}
+
+manage_protection() {
+    local action="$1"
+    local target="$2"
+    mkdir -p "$(dirname "$USER_IGNORE_FILE")"
+    touch "$USER_IGNORE_FILE"
+    
+    if [[ "$action" == "list" ]]; then
+        info "$(_t "System protected paths (Hardcoded):" "系统内置保护路径 (硬编码):")"
+        for i in "${UPDATE_IGNORE[@]}"; do echo "  - $i"; done
+        info "$(_t "User protected paths:" "用户自定义保护路径:")"
+        if [[ -s "$USER_IGNORE_FILE" ]]; then sed 's/^/  - /' "$USER_IGNORE_FILE"; else echo "  $(_t "(Empty)" "(空)")"; fi
+        return
+    fi
+    
+    if [[ -z "$target" ]]; then return; fi
+    local abs_path="$(realpath -m "$target")"
+    local clean_home="${HOME%/}"
+    if [[ "$abs_path" != "$clean_home/"* ]]; then err "$(_t "Path must be inside your home directory." "目标路径必须在您的家目录内。")"; return; fi
+    
+    local rel_path="${abs_path#$clean_home/}"
+    if [[ "$action" == "add" ]]; then
+        if grep -Fxq "$rel_path" "$USER_IGNORE_FILE" 2>/dev/null; then info "$(_t "Path is already protected." "已在保护列表中。")"
+        else echo "$rel_path" >> "$USER_IGNORE_FILE"; ok "$(_t "Protected: ~/$rel_path" "已添加保护: ~/$rel_path")"; fi
+    elif [[ "$action" == "remove" ]]; then
+        sed -i "\|^$rel_path$|d" "$USER_IGNORE_FILE" 2>/dev/null; ok "$(_t "Unprotected: ~/$rel_path" "已取消保护: ~/$rel_path")"
+    fi
+}
+
+backup_and_copy() {
+    local base_dir="$1"
+    local rel_path="$2"
+    local src_file="$base_dir/$rel_path"
+    local dest_file="$HOME/$rel_path"
+    local dest_dir="$(dirname "$dest_file")"
+    
+    mkdir -p "$dest_dir"
+    if [[ -e "$dest_file" || -L "$dest_file" ]]; then
+        local backup_file="$BACKUP_DIR/$rel_path"
+        mkdir -p "$(dirname "$backup_file")"
+        cp -a "$dest_file" "$backup_file"
+        rm -f "$dest_file"
+    fi
+    cp -a "$src_file" "$dest_file"
+}
+
+cleanup_old_backups() {
+    if [[ -d "$BASE_BACKUP_DIR" ]]; then
+        local backups=( $(ls -dt "$BASE_BACKUP_DIR"/* 2>/dev/null) )
+        if (( ${#backups[@]} > 2 )); then
+            for (( i=2; i<${#backups[@]}; i++ )); do rm -rf "${backups[i]}"; done
+        fi
+    fi
+}
+
+sync_dotfiles() {
+    local mode="$1"
+    local sync_count=0
+    local skip_count=0
+    build_ignore_list
+    
+    if [[ "$mode" == "update" ]]; then step "$(_t "Updating Configuration Files" "正在更新配置文件")"
+    else step "$(_t "Full Initialization Installation" "全量初始化配置")"; fi
+    
+    if [[ ! -d "$TEMPLATE_DIR" ]]; then err "$(_t "Template directory not found." "错误: 找不到模板目录。")"; exit 1; fi
+    mkdir -p "$BACKUP_DIR"
+    cd "$TEMPLATE_DIR" || exit 1
+    
+    while IFS= read -r -d '' file; do
+        local rel_path="${file#./}"
+        if [[ "$mode" == "update" ]] && is_ignored "$rel_path"; then ((skip_count++)); continue; fi
+        backup_and_copy "$TEMPLATE_DIR" "$rel_path"
+        ((sync_count++))
+    done < <(find . -type f -print0)
+    cleanup_old_backups
+    ok "$(_t "Synced $sync_count files successfully. (Skipped $skip_count files)" "成功同步 $sync_count 个文件。(跳过了 $skip_count 个受保护文件)")"
+}
+
+# ==========================================
+# 7. 环境应用与系统设置
+# ==========================================
+hide_desktop_file() {
+    local source_file="$1"
+    local filename=$(basename "$source_file")
+    local user_dir="$HOME/.local/share/applications"
+    local target_file="$user_dir/$filename"
+    if [[ -f "$source_file" ]]; then
+        mkdir -p "$user_dir"
+        cp -f "$source_file" "$target_file"
+        if grep -q "^NoDisplay=" "$target_file" 2>/dev/null; then sed -i 's/^NoDisplay=.*/NoDisplay=true/' "$target_file"
+        else echo "NoDisplay=true" >> "$target_file"; fi
+    fi
+}
+
+run_hide_desktop_file() {
+    local apps_to_hide=(
+        "lstopo.desktop" "avahi-discover.desktop" "qv4l2.desktop" "qvidcap.desktop" "bssh.desktop" "org.fcitx.Fcitx5.desktop"
+        "org.fcitx.fcitx5-migrator.desktop" "xgps.desktop" "xgpsspeed.desktop" "gvim.desktop" "kbd-layout-viewer5.desktop"
+        "bvnc.desktop" "yazi.desktop" "btop.desktop" "vim.desktop" "nvim.desktop" "nvtop.desktop" "mpv.desktop"
+        "org.gnome.Settings.desktop" "thunar-settings.desktop" "thunar-bulk-rename.desktop" "thunar-volman-settings.desktop"
+        "clipse-gui.desktop" "waypaper.desktop" "xfce4-about.desktop" "cmake-gui.desktop" "assistant.desktop"
+        "qdbusviewer.desktop" "linguist.desktop" "designer.desktop" "org.kde.drkonqi.coredump.gui.desktop"
+        "org.kde.kwrite.desktop" "org.freedesktop.MalcontentControl.desktop" "org.gnome.Nautilus.desktop"
+    )
+    for app in "${apps_to_hide[@]}"; do hide_desktop_file "/usr/share/applications/$app"; done
+}
+
+setup_system_environment() {
+    step "$(_t "Configuring System Environment" "正在配置底层系统与硬件服务")"
+    
+    local NEED_GENERATE=false
+    if ! locale -a | grep -iq "en_US.utf8"; then sudo sed -i 's/^#\s*en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen; NEED_GENERATE=true; fi
+    if ! locale -a | grep -iq "zh_CN.utf8"; then sudo sed -i 's/^#\s*zh_CN.UTF-8 UTF-8/zh_CN.UTF-8 UTF-8/' /etc/locale.gen; NEED_GENERATE=true; fi
+    if [ "$NEED_GENERATE" = true ]; then sudo locale-gen >/dev/null; ok "$(_t "Locales generated." "Locales 生成完成。")"; fi
+    
+    sudo systemctl enable --now power-profiles-daemon.service >/dev/null 2>&1 || true
+    sudo systemctl enable --now swayosd-libinput-backend.service >/dev/null 2>&1 || true
+    sudo gpasswd -a "$USER" i2c >/dev/null 2>&1 || true
+    if ! grep -q "i2c-dev" /etc/modules-load.d/i2c-dev.conf 2>/dev/null; then echo "i2c-dev" | sudo tee /etc/modules-load.d/i2c-dev.conf >/dev/null; fi
+    
+    local POL_DIR="/etc/firefox/policies"
+    sudo mkdir -p "$POL_DIR"
+    sudo tee "$POL_DIR/policies.json" > /dev/null << 'EOF'
+{
+  "policies": {
+    "Extensions": {
+      "Install": [
+        "https://addons.mozilla.org/firefox/downloads/latest/pywalfox/latest.xpi",
+        "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi"
+      ]
+    }
+  }
+}
+EOF
+    sudo chmod 755 "$POL_DIR"; sudo chmod 644 "$POL_DIR/policies.json"
+}
+
+apply_user_configs() {
+    step "$(_t "Applying User Environment Settings" "正在应用用户环境设置")"
+    LANG=en_US.UTF-8 LANGUAGE=en_US.UTF-8 xdg-user-dirs-update --force || true
+    mkdir -p "$HOME/.config"
+    if ! grep -q "kitty.desktop" "$HOME/.config/xdg-terminals.list" 2>/dev/null; then echo 'kitty.desktop' >> "$HOME/.config/xdg-terminals.list"; fi
+    
+    if command -v gsettings >/dev/null 2>&1; then
+        GSETTINGS_CMDS='
+            gsettings set org.gnome.desktop.interface color-scheme "prefer-dark" 2>/dev/null || true
+            gsettings set org.gnome.desktop.interface gtk-theme "adw-gtk3-dark" 2>/dev/null || true
+            gsettings set com.github.stunkymonkey.nautilus-open-any-terminal terminal kitty 2>/dev/null || true
+            gsettings set org.gnome.desktop.wm.preferences button-layout ":close" 2>/dev/null || true
+        '
+        if [ -n "$DBUS_SESSION_BUS_ADDRESS" ]; then eval "$GSETTINGS_CMDS"
+        else
+            USER_DBUS=$(systemctl --user show-environment 2>/dev/null | grep -E '^DBUS_SESSION_BUS_ADDRESS=')
+            if [ -n "$USER_DBUS" ]; then export "$USER_DBUS"; eval "$GSETTINGS_CMDS"
+            elif command -v dbus-run-session >/dev/null 2>&1; then dbus-run-session bash -c "$GSETTINGS_CMDS"
+            else eval "$GSETTINGS_CMDS"; fi
+        fi
+    fi
+    
+    if [[ -f "$HOME/.config/gtk-3.0/bookmarks" ]]; then sed -i "s/shorin/$USER/g" "$HOME/.config/gtk-3.0/bookmarks" 2>/dev/null || true; fi
+    
+    mkdir -p "$HOME/Templates"
+    touch "$HOME/Templates/new"
+    echo '#!/usr/bin/env bash' > "$HOME/Templates/new.sh" && chmod +x "$HOME/Templates/new.sh"
+    
+    if command -v flatpak >/dev/null 2>&1; then
+        flatpak override --user --filesystem=xdg-data/themes 2>/dev/null || true
+        flatpak override --user --filesystem="$HOME/.themes" 2>/dev/null || true
+        flatpak override --user --filesystem=xdg-config/gtk-4.0 2>/dev/null || true
+        flatpak override --user --filesystem=xdg-config/gtk-3.0 2>/dev/null || true
+        flatpak override --user --env=GTK_THEME=adw-gtk3-dark 2>/dev/null || true
+        flatpak override --user --filesystem=xdg-config/fontconfig 2>/dev/null || true
+    fi
+    
+    mkdir -p "$HOME/.local/share" "$HOME/.local/bin"
+    ln -sfn /usr/share/themes "$HOME/.local/share/themes"
+    if command -v kitty >/dev/null 2>&1; then ln -sfn /usr/bin/kitty "$HOME/.local/bin/xterm"; fi
+    
+    run_hide_desktop_file
+
+    # 部署默认壁纸
+    if [[ -d "$WALLPAPER_SRC_DIR" ]]; then
+        local wp_dest="$HOME/Pictures/Wallpapers"
+        mkdir -p "$wp_dest"
+        cp -an "$WALLPAPER_SRC_DIR"/. "$wp_dest/" || true
+    fi
+    
+    shorin link >/dev/null 2>&1 || true
+
+    if command -v rime-llm-config >/dev/null 2>&1; then
+        info "$(_t "Initializing Rime LLM Translator (AI Input Method)..." "正在为您自动配置 Rime LLM Translator 大模型联想...")"
+        rime-llm-config init
+        echo ""
+    fi
+    
+    mkdir -p "$HOME/.config/niri/dms"
+    touch "$HOME/.config/niri/dms/colors.kdl"
+    if [[ ! -f "$HOME/.config/niri/output.kdl" && -f "$HOME/.config/niri/output-example.kdl" ]]; then
+        cp "$HOME/.config/niri/output-example.kdl" "$HOME/.config/niri/output.kdl"
+    fi
+
+    local doc_src="/usr/share/doc/shorin-niri/README-Niri.txt"
+    if [[ -f "$doc_src" ]]; then cp -n "$doc_src" "$HOME/必看-shoirn-Niri使用方法.txt" 2>/dev/null || true; fi
+    
+    ok "$(_t "Environment initialization complete!" "环境初始化全部完成！")"
+}
+
+remove_dotfiles() {
+    step "$(_t "Uninstall & Cleanup" "卸载与清理")"
+    warn "$(_t "WARNING: This will remove all managed configs!" "警告：这将移除家目录下所有受管理的配置文件！")"
+    read -p "$(_t "Are you sure you want to continue? [y/N] " "确定要继续清理吗？ [y/N] ")" confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then return; fi
+    
+    ask_for_sudo # 提前触发 sudo 探针，避免下面清理 firefox 策略时中断
+    
+    if [[ ! -d "$TEMPLATE_DIR" ]]; then exit 1; fi
+    cd "$TEMPLATE_DIR" || exit 1
+    
+    local removed_count=0
+    while IFS= read -r -d '' file; do
+        local dest_file="$HOME/${file#./}"
+        if [[ -e "$dest_file" || -L "$dest_file" ]]; then rm -f "$dest_file"; ((removed_count++)); fi
+    done < <(find . -type f -print0)
+    
+    rm -f "$HOME/.config/niri/dms/colors.kdl" "$HOME/必看-shoirn-Niri使用方法.txt" 2>/dev/null
+    rmdir "$HOME/.config/niri/dms" 2>/dev/null
+    
+    if [[ -f "/etc/firefox/policies/policies.json" ]]; then
+        sudo rm -f "/etc/firefox/policies/policies.json"
+        sudo rmdir "/etc/firefox/policies" "/etc/firefox" 2>/dev/null
+    fi
+    
+    ok "$(_t "Cleanup complete! Removed $removed_count files." "配置清理完成！精准移除了 $removed_count 个核心配置文件。")"
+
+    # ==========================================
+    # 新增：温柔地处理软件包卸载建议
+    # ==========================================
+    if [[ -f "$CACHE_FILE" ]]; then
+        step "$(_t "Software Cleanup Suggestion" "配套软件清理建议")"
+        info "$(_t "Shorin Niri previously installed the following optional software:" "Shorin Niri 此前为您安装了以下配套软件：")"
+        
+        local cached_pkgs=()
+        mapfile -t cached_pkgs < "$CACHE_FILE"
+        local installed_pkgs=()
+
+        # 过滤出当前系统中仍然安装着的包
+        for pkg in "${cached_pkgs[@]}"; do
+            if pacman -Qq "$pkg" >/dev/null 2>&1; then
+                installed_pkgs+=("$pkg")
+            fi
+        done
+
+        if [[ ${#installed_pkgs[@]} -gt 0 ]]; then
+            # 简单列出部分，防止刷屏
+            echo -e "${C_YEL}${installed_pkgs[*]}${C_DEF}" | fold -w 80 -s
+            echo ""
+            warn "$(_t "Some of these packages (like firefox, kitty, fcitx5) might be used by you independently." "警告：其中某些软件（如 firefox, kitty, fcitx5）您可能在其他桌面环境下仍需要使用！")"
+            info "$(_t "If you want to completely remove them, review and run the following command manually:" "如果您确定不再需要它们，请自行检查并复制运行以下命令进行彻底卸载：")"
+            echo ""
+            # 注意：此处推荐使用 paru -Rns
+            echo -e "    ${C_RED}paru -Rns ${installed_pkgs[*]}${C_DEF}"
+            echo ""
+        fi
+        
+        # 顺便清理缓存文件本身
+        rm -f "$CACHE_FILE"
+    fi
+}
+
+# ==========================================
+# 8. 路由入口
+# ==========================================
+case "$1" in
+    init) 
+        ask_for_sudo
+        manage_software
+        sync_dotfiles "init"
+        setup_system_environment
+        apply_user_configs 
+        ;;
+    update) 
+        ask_for_sudo
+        manage_software
+        sync_dotfiles "update" 
+        ;;
+    remove) remove_dotfiles ;;
+    protect) manage_protection "add" "$2" ;;
+    unprotect) manage_protection "remove" "$2" ;;
+    protected-list) manage_protection "list" ;;
+    hide-icons) run_hide_desktop_file ;;
+    *)
+        echo -e "${C_BLU}Usage:${C_DEF} shorinniri {init|update|remove|protect|unprotect|protected-list|hide-icons}"
+        exit 1
+    ;;
+esac
+
+~~~~
