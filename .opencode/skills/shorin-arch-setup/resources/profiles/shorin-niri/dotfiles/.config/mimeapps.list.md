@@ -38,6 +38,8 @@ video/avi=mpv.desktop
 video/quicktime=mpv.desktop
 text/plain=vim.desktop
 application/vnd.microsoft.portable-executable=shorin-proton-wrapper-run-windows-program.desktop
+application/x-ms-dos-executable=shorin-proton-wrapper-run-windows-program.desktop
+application/x-msdownload=shorin-proton-wrapper-run-windows-program.desktop
 
 [Added Associations]
 image/png=imv.desktop;
@@ -46,5 +48,7 @@ application/x-shellscript=vim.desktop;
 video/mp4=mpv.desktop;
 text/plain=vim.desktop;
 application/vnd.microsoft.portable-executable=shorin-proton-wrapper-run-windows-program.desktop;
+application/x-ms-dos-executable=shorin-proton-wrapper-run-windows-program.desktop;
+application/x-msdownload=shorin-proton-wrapper-run-windows-program.desktop;
 
 ~~~~
